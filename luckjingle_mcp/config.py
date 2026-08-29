@@ -16,11 +16,59 @@ CONFIG_PATH = Path.home() / ".config" / "luckjingle-mcp" / "config.json"
 TOKEN_KEY = "_auth_token"
 AUTH_HEADER = "X-Luckjingle-Token"
 
+# Config schema: "printers" is a dict of name -> {driver, address, width,
+# density, font_path}, with "active_printer" naming the one print calls use
+# when no printer is named explicitly. Schema version 1 was a single flat
+# printer block (address/width/density/font_path at the top level, no
+# "driver" field - implicitly the only driver that ever existed,
+# "luckprinter").
+SCHEMA_VERSION = 2
+DEFAULT_DRIVER = "luckprinter"
+DEFAULT_PRINTER_NAME = "default"
+
+
+def _migrate(cfg: dict) -> tuple[dict, bool]:
+    """Upgrade a v1 (or empty/fresh) config to the current schema. Returns
+    (config, changed) - changed is False if cfg was already current, so
+    callers can skip an unnecessary rewrite."""
+    if cfg.get("_schema_version") == SCHEMA_VERSION and "printers" in cfg:
+        return cfg, False
+
+    printers = cfg.get("printers")
+    if printers is None:
+        printers = {}
+        if cfg.get("address"):
+            printers[DEFAULT_PRINTER_NAME] = {
+                "driver": DEFAULT_DRIVER,
+                "address": cfg["address"],
+                "width": cfg.get("width", 384),
+                "density": cfg.get("density"),
+                "font_path": cfg.get("font_path"),
+            }
+
+    active = cfg.get("active_printer")
+    if active not in printers:
+        active = next(iter(printers), None)
+
+    migrated = {
+        "_schema_version": SCHEMA_VERSION,
+        "printers": printers,
+        "active_printer": active,
+    }
+    if TOKEN_KEY in cfg:
+        migrated[TOKEN_KEY] = cfg[TOKEN_KEY]
+    return migrated, True
+
 
 def load_config() -> dict:
     if CONFIG_PATH.exists():
-        return json.loads(CONFIG_PATH.read_text())
-    return {}
+        cfg = json.loads(CONFIG_PATH.read_text())
+    else:
+        cfg = {}
+    cfg, changed = _migrate(cfg)
+    if changed:
+        save_config(cfg)
+    return cfg
 
 
 def save_config(cfg: dict) -> None:
@@ -48,3 +96,13 @@ def get_or_create_token() -> str:
         cfg[TOKEN_KEY] = token
         save_config(cfg)
     return token
+
+
+def get_printer(cfg: dict, name: str | None) -> dict | None:
+    """Look up a printer profile by name, or the active printer if name is
+    None. Returns None if there's no such printer / no active printer set."""
+    if name is None:
+        name = cfg.get("active_printer")
+    if name is None:
+        return None
+    return cfg.get("printers", {}).get(name)

@@ -14,7 +14,15 @@ from pathlib import Path
 
 from PIL import Image
 
-from .config import AUTH_HEADER, get_or_create_token, load_config, load_public_config, save_config
+from .config import (
+    AUTH_HEADER,
+    DEFAULT_DRIVER,
+    DEFAULT_PRINTER_NAME,
+    get_or_create_token,
+    get_printer,
+    load_config,
+    save_config,
+)
 from .printer import BluetoothDevice, LuckPrinter, scan_devices
 
 HOST = "127.0.0.1"
@@ -81,20 +89,24 @@ def _validate_options(body: dict) -> None:
         raise ValueError("; ".join(errors))
 
 
-async def _open_printer() -> LuckPrinter:
+async def _open_printer(name: str | None = None) -> LuckPrinter:
+    """Open the named printer, or the active one if name is None. `name` is
+    unused externally for now (there's still only ever one configured
+    printer from the caller's point of view) - it's here so the multi-
+    printer selection work doesn't need to touch this again."""
     cfg = load_config()
-    address = cfg.get("address")
-    if not address:
+    profile = get_printer(cfg, name)
+    if not profile or not profile.get("address"):
         raise ValueError(
             "No printer configured. POST /scan to find its address, then "
             "POST /set_address."
         )
-    device = BluetoothDevice(address)
+    device = BluetoothDevice(profile["address"])
     printer = LuckPrinter(
         device,
-        width=cfg.get("width", 384),
-        density=cfg.get("density"),
-        font_path=cfg.get("font_path"),
+        width=profile.get("width", 384),
+        density=profile.get("density"),
+        font_path=profile.get("font_path"),
     )
     await printer.initialize()
     return printer
@@ -173,25 +185,33 @@ class Handler(BaseHTTPRequestHandler):
     def _set_address(self, body):
         with _config_lock:
             cfg = load_config()
-            cfg["address"] = body["address"]
+            name = cfg.get("active_printer") or DEFAULT_PRINTER_NAME
+            profile = cfg["printers"].setdefault(name, {"driver": DEFAULT_DRIVER})
+            profile["address"] = body["address"]
+            cfg["active_printer"] = name
             save_config(cfg)
         self._send_json({"ok": True})
 
     def _get_config(self, _body):
         with _config_lock:
-            cfg = load_public_config()
-        self._send_json(cfg)
+            profile = get_printer(load_config(), None)
+        # Still the flat single-printer shape externally - there's only ever
+        # one selectable printer from the caller's point of view for now.
+        self._send_json(dict(profile) if profile else {})
 
     def _set_options(self, body):
         _validate_options(body)
         with _config_lock:
             cfg = load_config()
+            name = cfg.get("active_printer") or DEFAULT_PRINTER_NAME
+            profile = cfg["printers"].setdefault(name, {"driver": DEFAULT_DRIVER})
             for key in ("width", "density", "font_path"):
                 if body.get(key) is not None:
-                    cfg[key] = body[key]
+                    profile[key] = body[key]
+            cfg["active_printer"] = name
             save_config(cfg)
-            public_cfg = load_public_config()
-        self._send_json(public_cfg)
+            result = dict(profile)
+        self._send_json(result)
 
     def _print_text(self, body):
         async def job():
