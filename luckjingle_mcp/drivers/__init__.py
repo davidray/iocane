@@ -1,8 +1,12 @@
 from .base import DEFAULT_WIDTH, PrinterDriver, PrinterSession
+from .d1x import D1XDriver
 from .luckprinter import LuckPrinterDriver
 
 DRIVERS: dict[str, type[PrinterDriver]] = {
     "luckprinter": LuckPrinterDriver,
+    # Experimental / unverified against real hardware - see d1x.py's
+    # module docstring before relying on this.
+    "d1x": D1XDriver,
 }
 
 

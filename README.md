@@ -6,10 +6,16 @@ them - print to whichever one you select, or name one explicitly per job.
 
 Printer support is pluggable: each printer family is a small driver (see
 ["Adding support for a new printer"](#adding-support-for-a-new-printer)
-below). Right now there's one driver, `luckprinter`, covering "LuckPrinter
-SDK" printers - the ones sold under names like **NHOWIN**, **NDYIN**,
-**C&Co 3128**, **DP-L1S**, etc, that all run on the "LuckPrinter SDK" behind
-the "Luck Jingle" phone app (159+ rebrand models share this SDK).
+below). Two drivers exist so far:
+
+- `luckprinter` (the default) covers "LuckPrinter SDK" printers - the ones
+  sold under names like **NHOWIN**, **NDYIN**, **C&Co 3128**, **DP-L1S**,
+  etc, that all run on the "LuckPrinter SDK" behind the "Luck Jingle" phone
+  app (159+ rebrand models share this SDK).
+- `d1x` targets "D1"-family printers (e.g. "Dingdang D1"). **This one is
+  experimental and unverified against real hardware** - see
+  [NOTICE.md](NOTICE.md) for why, and try a real test print before trusting
+  it with anything that matters.
 
 These printers don't publish an official protocol or SDK. `luckprinter`
 talks to them using a protocol reverse engineered by the community by
@@ -156,7 +162,8 @@ separately each time you want to print (see above).
 - `probe_device(address, timeout=15)` - connect and list GATT
   services/characteristics, to verify a candidate device before adding it
 - `add_printer(name, address, driver="luckprinter")` - add or update a
-  named printer profile; the first one added becomes active
+  named printer profile; the first one added becomes active. `driver` can
+  also be `"d1x"` (experimental, see above)
 - `list_printers()` - list every configured printer and which is active
 - `select_printer(name)` - switch the active printer
 - `remove_printer(name)` - remove a configured printer
@@ -185,10 +192,11 @@ disk, then call `print_image` with that path.
 - **Any MCP tool call fails with a connection error**: the daemon app isn't
   running - see "macOS Bluetooth permission" above.
 - **Connects (printer's LED changes) but nothing physically prints**: the
-  printer probably isn't in the `luckprinter` (LuckPrinter SDK) family this
-  driver targets, or uses a variant that builds the image command
-  differently. Run `probe_device` to confirm the GATT layout matches, and
-  check `PROTOCOL.md` in
+  printer probably isn't in the `luckprinter` (LuckPrinter SDK) family the
+  default driver targets, or uses a variant that builds the image command
+  differently. If it's branded "D1" / "Dingdang D1", try re-adding it with
+  `driver="d1x"` (experimental, see above) - otherwise run `probe_device`
+  to confirm the GATT layout matches, and check `PROTOCOL.md` in
   [thermal-pocket-printer-basic](https://github.com/ChiaraCannolee/thermal-pocket-printer-basic)
   for the full command reference if you need to adapt
   `luckjingle_mcp/drivers/luckprinter.py`, or write a new driver (see below).
@@ -235,7 +243,12 @@ alone doesn't guarantee compatibility), here's how to add one:
    confirm against real hardware before calling it done).
 5. Open a PR. Mention what hardware you tested against - a driver that's
    only ever run against the one printer its author owns is worth having,
-   but should say so.
+   but should say so. If you can't test against real hardware at all,
+   that's still worth contributing (see
+   [`luckjingle_mcp/drivers/d1x.py`](luckjingle_mcp/drivers/d1x.py) for an
+   example) - just label it experimental as clearly as that one does, in
+   the driver's module docstring, the `add_printer` tool docstring, and
+   this README.
 
 ## Development
 
