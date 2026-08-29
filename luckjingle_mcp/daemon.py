@@ -55,6 +55,24 @@ async def _probe_device(address: str, timeout: float) -> list[dict]:
         await client.disconnect()
 
 
+def _validate_options(body: dict) -> None:
+    """Reject bad width/density up front, at set_options time, rather than
+    letting them silently reach printer.py and blow up as an opaque
+    exception the next time someone prints (e.g. Pillow's Image.resize
+    raising on a non-positive width)."""
+    errors = []
+    width = body.get("width")
+    if width is not None and (not isinstance(width, int) or isinstance(width, bool) or width <= 0):
+        errors.append("width must be a positive integer (dots)")
+    density = body.get("density")
+    if density is not None and (
+        not isinstance(density, int) or isinstance(density, bool) or not (0 <= density <= 2)
+    ):
+        errors.append("density must be an integer between 0 and 2")
+    if errors:
+        raise ValueError("; ".join(errors))
+
+
 async def _open_printer() -> LuckPrinter:
     cfg = load_config()
     address = cfg.get("address")
@@ -123,6 +141,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "not found"}, 404)
                 return
             handler(body)
+        except ValueError as e:
+            self._send_json({"error": str(e)}, 400)
         except Exception as e:  # noqa: BLE001 - report to caller, don't crash the daemon
             # Log the full traceback locally for debugging, but don't hand it
             # to the caller - it includes local file paths and internals that
@@ -152,6 +172,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(load_public_config())
 
     def _set_options(self, body):
+        _validate_options(body)
         cfg = load_config()
         for key in ("width", "density", "font_path"):
             if body.get(key) is not None:
