@@ -22,6 +22,14 @@ PORT = 8765
 
 _loop = asyncio.new_event_loop()
 
+# ThreadingHTTPServer runs every request in its own thread, but the printer
+# only supports one BLE connection at a time and the config file isn't safe
+# for concurrent read-modify-write. Serialize access to each so overlapping
+# requests (e.g. two print jobs, or a config write racing another) can't
+# interleave BLE writes (corrupting the print) or silently drop an update.
+_printer_lock = asyncio.Lock()
+_config_lock = threading.Lock()
+
 
 def _run_loop():
     asyncio.set_event_loop(_loop)
@@ -163,35 +171,41 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"services": services})
 
     def _set_address(self, body):
-        cfg = load_config()
-        cfg["address"] = body["address"]
-        save_config(cfg)
+        with _config_lock:
+            cfg = load_config()
+            cfg["address"] = body["address"]
+            save_config(cfg)
         self._send_json({"ok": True})
 
     def _get_config(self, _body):
-        self._send_json(load_public_config())
+        with _config_lock:
+            cfg = load_public_config()
+        self._send_json(cfg)
 
     def _set_options(self, body):
         _validate_options(body)
-        cfg = load_config()
-        for key in ("width", "density", "font_path"):
-            if body.get(key) is not None:
-                cfg[key] = body[key]
-        save_config(cfg)
-        self._send_json(load_public_config())
+        with _config_lock:
+            cfg = load_config()
+            for key in ("width", "density", "font_path"):
+                if body.get(key) is not None:
+                    cfg[key] = body[key]
+            save_config(cfg)
+            public_cfg = load_public_config()
+        self._send_json(public_cfg)
 
     def _print_text(self, body):
         async def job():
-            printer = await _open_printer()
-            try:
-                await printer.print_text(
-                    body["text"],
-                    font_size=body.get("font_size", 24),
-                    align=body.get("align", "left"),
-                )
-                await printer.print_end()
-            finally:
-                await printer.close()
+            async with _printer_lock:
+                printer = await _open_printer()
+                try:
+                    await printer.print_text(
+                        body["text"],
+                        font_size=body.get("font_size", 24),
+                        align=body.get("align", "left"),
+                    )
+                    await printer.print_end()
+                finally:
+                    await printer.close()
 
         _run_coro(job(), timeout=60)
         self._send_json({"ok": True})
@@ -204,12 +218,13 @@ class Handler(BaseHTTPRequestHandler):
         dither = body.get("dither", True)
 
         async def job():
-            printer = await _open_printer()
-            try:
-                await printer.print_image(img, dither=dither)
-                await printer.print_end()
-            finally:
-                await printer.close()
+            async with _printer_lock:
+                printer = await _open_printer()
+                try:
+                    await printer.print_image(img, dither=dither)
+                    await printer.print_end()
+                finally:
+                    await printer.close()
 
         _run_coro(job(), timeout=60)
         self._send_json({"ok": True})
