@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from .config import load_config, save_config
+from .config import AUTH_HEADER, get_or_create_token, load_config, load_public_config, save_config
 from .printer import BluetoothDevice, LuckPrinter, scan_devices
 
 HOST = "127.0.0.1"
@@ -91,13 +91,22 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
+    def _authorized(self) -> bool:
+        return self.headers.get(AUTH_HEADER) == get_or_create_token()
+
     def do_GET(self):
+        if not self._authorized():
+            self._send_json({"error": "unauthorized"}, 401)
+            return
         if self.path == "/health":
             self._send_json({"ok": True})
         else:
             self._send_json({"error": "not found"}, 404)
 
     def do_POST(self):
+        if not self._authorized():
+            self._send_json({"error": "unauthorized"}, 401)
+            return
         try:
             body = self._read_json()
             handler = {
@@ -137,7 +146,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True})
 
     def _get_config(self, _body):
-        self._send_json(load_config())
+        self._send_json(load_public_config())
 
     def _set_options(self, body):
         cfg = load_config()
@@ -145,7 +154,7 @@ class Handler(BaseHTTPRequestHandler):
             if body.get(key) is not None:
                 cfg[key] = body[key]
         save_config(cfg)
-        self._send_json(cfg)
+        self._send_json(load_public_config())
 
     def _print_text(self, body):
         async def job():
