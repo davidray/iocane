@@ -83,10 +83,12 @@ def scan_printers(timeout: float = 6.0) -> list[dict]:
 def probe_device(address: str, timeout: float = 15) -> list[dict]:
     """Connect to a BLE device and list its GATT services/characteristics.
 
-    Useful for confirming a candidate address (found via scan_printers)
-    is really the printer before saving it - a LuckJingle-protocol printer
+    Useful for confirming a candidate address (found via scan_printers) is
+    really a supported printer before adding it - a compatible printer
     should expose a custom service containing characteristics ending in
-    ff01, ff02, and ff03.
+    ff01, ff02, and ff03. Note that this GATT layout alone doesn't tell you
+    which driver to use - more than one incompatible protocol variant
+    shares it - so still confirm with a real test print after adding it.
     """
     result = _request("POST", "/probe", {"address": address, "timeout": timeout}, timeout=timeout + 15)
     return result["services"]
@@ -94,14 +96,21 @@ def probe_device(address: str, timeout: float = 15) -> list[dict]:
 
 @mcp.tool()
 def set_printer_address(address: str) -> str:
-    """Save the Bluetooth address of the printer for future print jobs."""
+    """Save the Bluetooth address of the printer for future print jobs.
+
+    This is a shortcut for the common single-printer case - it updates
+    whichever printer is currently active (creating one named "default" if
+    none exists yet). To configure more than one printer, use add_printer
+    instead, which lets you name each one.
+    """
     _request("POST", "/set_address", {"address": address})
     return f"Saved printer address: {address}"
 
 
 @mcp.tool()
 def get_printer_config() -> dict:
-    """Return the currently saved printer configuration (address, paper width, etc)."""
+    """Return the active printer's saved configuration (address, driver,
+    paper width, etc). Use list_printers to see every configured printer."""
     cfg = _request("POST", "/get_config", {})
     if not cfg:
         return {"configured": False}
@@ -109,53 +118,95 @@ def get_printer_config() -> dict:
 
 
 @mcp.tool()
+def list_printers() -> dict:
+    """List every configured printer (name, driver, address, settings) and
+    which one is currently active - the one print_text/print_image use when
+    no printer is named explicitly."""
+    return _request("POST", "/list_printers", {})
+
+
+@mcp.tool()
+def add_printer(name: str, address: str, driver: str = "luckprinter") -> dict:
+    """Add (or update, if the name already exists) a named printer profile.
+    If this is the first printer configured, it becomes the active one
+    automatically - otherwise use select_printer to switch to it.
+
+    driver identifies the printer's protocol family - "luckprinter" (the
+    default) covers the LuckPrinter-SDK rebrand family (NHOWIN, PPS1,
+    C&Co 3128, DP-L1S, etc) and is the only driver available so far.
+    """
+    return _request("POST", "/add_printer", {"name": name, "address": address, "driver": driver})
+
+
+@mcp.tool()
+def remove_printer(name: str) -> dict:
+    """Remove a configured printer. If it was the active one, another
+    remaining configured printer (if any) becomes active."""
+    return _request("POST", "/remove_printer", {"name": name})
+
+
+@mcp.tool()
+def select_printer(name: str) -> dict:
+    """Set which configured printer print_text/print_image use by default
+    when no printer is named explicitly on the call."""
+    return _request("POST", "/select_printer", {"name": name})
+
+
+@mcp.tool()
 def set_printer_options(
     width: int | None = None,
     density: int | None = None,
     font_path: str | None = None,
+    name: str | None = None,
 ) -> dict:
-    """Tune print quality. width is the paper width in dots (384 is standard
-    for common 48mm/58mm thermal labels - only change it if prints come out
-    cropped or skewed). density (0=light, 1=normal, 2=dark) adjusts print
-    darkness if prints look too light/dark - leave unset to use the
-    printer's own default. font_path points to a .ttf/.otf file to use for
-    print_text instead of the built-in fallback.
+    """Tune print quality for a printer. width is the paper width in dots
+    (384 is standard for common 48mm/58mm thermal labels - only change it
+    if prints come out cropped or skewed). density (0=light, 1=normal,
+    2=dark) adjusts print darkness if prints look too light/dark - leave
+    unset to use the printer's own default. font_path points to a .ttf/.otf
+    file to use for print_text instead of the built-in fallback. name picks
+    which configured printer to change settings for - leave unset to use
+    the active printer.
     """
     return _request(
         "POST",
         "/set_options",
-        {"width": width, "density": density, "font_path": font_path},
+        {"width": width, "density": density, "font_path": font_path, "name": name},
     )
 
 
 @mcp.tool()
-def print_text(text: str, font_size: int = 24, align: str = "left") -> str:
+def print_text(text: str, font_size: int = 24, align: str = "left", printer: str | None = None) -> str:
     """Print a block of text on the label printer, wrapped to the paper width.
 
-    align may be "left", "center", or "right".
+    align may be "left", "center", or "right". printer names which
+    configured printer to use for this one print job, overriding the
+    active printer - leave unset to use the active printer.
     """
     _request(
         "POST",
         "/print_text",
-        {"text": text, "font_size": font_size, "align": align},
+        {"text": text, "font_size": font_size, "align": align, "printer": printer},
         timeout=60,
     )
     return "Print job sent."
 
 
 @mcp.tool()
-def print_image(image_path: str, dither: bool = True) -> str:
+def print_image(image_path: str, dither: bool = True, printer: str | None = None) -> str:
     """Print an image file (PNG/JPG/etc) on the label printer.
 
     The image is resized to the printer's configured paper width and
     converted to black & white. Leave dither=True for photos/gradients;
     set dither=False for already-black-and-white line art or text to keep
-    edges crisp.
+    edges crisp. printer names which configured printer to use for this one
+    print job, overriding the active printer - leave unset to use the
+    active printer.
     """
     _request(
         "POST",
         "/print_image",
-        {"image_path": image_path, "dither": dither},
+        {"image_path": image_path, "dither": dither, "printer": printer},
         timeout=60,
     )
     return "Print job sent."
