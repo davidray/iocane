@@ -32,7 +32,7 @@ This is split into two processes, which is unfortunately necessary on macOS:
 ## Install
 
 ```bash
-cd /Users/dave/code/iocane
+cd /path/to/iocane   # wherever you cloned this repo
 python3 -m venv .venv
 .venv/bin/pip install -e .
 ```
@@ -51,8 +51,13 @@ prompt for it instead.
 Claude/a terminal spawned by Claude:**
 
 ```bash
-open /Users/dave/code/iocane/macos_app/LuckJingleDaemon.app
+open /path/to/iocane/macos_app/LuckJingleDaemon.app
 ```
+
+(The bundle's launcher script locates its own venv relative to itself, so
+this works from whatever path you cloned the repo to. If the daemon doesn't
+start and nothing obvious shows up, check
+`~/Library/Logs/luckjingle-daemon.log`.)
 
 The first time, macOS will show a Bluetooth permission prompt attributed to
 `python3.14` (or similar) - accept it. It's a background app (no dock icon,
@@ -102,7 +107,7 @@ for future print jobs, so you only need to do this once.
 ## Register the MCP server with Claude Code
 
 ```bash
-claude mcp add luckjingle -- /Users/dave/code/iocane/.venv/bin/luckjingle-mcp
+claude mcp add luckjingle -- /path/to/iocane/.venv/bin/luckjingle-mcp
 ```
 
 Or add directly to your MCP config (e.g. `~/.claude.json` or `.mcp.json`):
@@ -111,7 +116,7 @@ Or add directly to your MCP config (e.g. `~/.claude.json` or `.mcp.json`):
 {
   "mcpServers": {
     "luckjingle": {
-      "command": "/Users/dave/code/iocane/.venv/bin/luckjingle-mcp"
+      "command": "/path/to/iocane/.venv/bin/luckjingle-mcp"
     }
   }
 }
