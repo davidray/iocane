@@ -10,6 +10,7 @@
 import json
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 
@@ -17,11 +18,16 @@ from .config import AUTH_HEADER, get_or_create_token
 
 BASE_URL = "http://127.0.0.1:8765"
 
+# This file lives at <repo_root>/luckjingle_mcp/server.py, and the app
+# bundle at <repo_root>/macos_app/LuckJingleDaemon.app - derive the hint
+# path from here instead of hardcoding one checkout's absolute path.
+_APP_BUNDLE_PATH = Path(__file__).resolve().parent.parent / "macos_app" / "LuckJingleDaemon.app"
+
 APP_BUNDLE_HINT = (
     "Could not reach the LuckJingle print daemon at {url}. It has to run as "
     "its own app - not as a subprocess of Claude - so macOS can grant it "
     "Bluetooth permission directly. Start it with:\n\n"
-    "  open '/Users/dave/code/iocane/macos_app/LuckJingleDaemon.app'\n\n"
+    "  open '{app_path}'\n\n"
     "The first launch will show a macOS Bluetooth permission prompt for "
     "'LuckJingle Print Daemon' - accept it, then retry."
 )
@@ -52,7 +58,7 @@ def _request(method: str, path: str, payload: dict | None = None, timeout: float
             raise RuntimeError(result["error"]) from e
         raise RuntimeError(f"Daemon returned HTTP {e.code}") from e
     except urllib.error.URLError as e:
-        raise ConnectionError(APP_BUNDLE_HINT.format(url=BASE_URL)) from e
+        raise ConnectionError(APP_BUNDLE_HINT.format(url=BASE_URL, app_path=_APP_BUNDLE_PATH)) from e
     if isinstance(result, dict) and "error" in result:
         raise RuntimeError(result["error"])
     return result

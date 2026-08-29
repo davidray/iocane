@@ -3,4 +3,29 @@
 # independently (e.g. `open LuckJingleDaemon.app`) rather than as a
 # subprocess of another app, so macOS attributes Bluetooth (TCC) permission
 # to this bundle instead of crashing. See ../../../README.md.
-exec "/Users/dave/code/iocane/.venv/bin/python" -m luckjingle_mcp.daemon "$@"
+#
+# This script lives 4 directories below the repo root
+# (macos_app/LuckJingleDaemon.app/Contents/MacOS/), so it locates the repo's
+# venv relative to itself instead of hardcoding one checkout's absolute
+# path - this bundle is committed to the repo and needs to work for anyone
+# who clones it to their own path. Falls back to whatever `python3` is on
+# PATH if that venv doesn't exist (e.g. luckjingle-mcp installed globally).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+VENV_PYTHON="$REPO_ROOT/.venv/bin/python"
+LOG_FILE="$HOME/Library/Logs/luckjingle-daemon.log"
+
+if [ -x "$VENV_PYTHON" ]; then
+    PYTHON_BIN="$VENV_PYTHON"
+else
+    PYTHON_BIN="$(command -v python3)"
+fi
+
+if [ -z "$PYTHON_BIN" ]; then
+    echo "luckjingle-daemon: no Python interpreter found (looked for $VENV_PYTHON and python3 on PATH)" >> "$LOG_FILE" 2>&1
+    exit 1
+fi
+
+# This is a background LSUIElement app with no window, so a failure here is
+# otherwise completely silent - log it so it's debuggable.
+exec "$PYTHON_BIN" -m luckjingle_mcp.daemon "$@" >> "$LOG_FILE" 2>&1
