@@ -10,6 +10,9 @@ dependencies = [
     "pillow>=10.0.0",
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
 [project.scripts]
 luckjingle-mcp = "luckjingle_mcp.server:main"
 luckjingle-daemon = "luckjingle_mcp.daemon:main"
@@ -20,3 +23,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["luckjingle_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
