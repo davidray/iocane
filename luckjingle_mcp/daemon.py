@@ -23,7 +23,8 @@ from .config import (
     load_config,
     save_config,
 )
-from .printer import BluetoothDevice, LuckPrinter, scan_devices
+from .drivers import DEFAULT_WIDTH, PrinterSession, get_driver_class
+from .printer import BluetoothDevice, scan_devices
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -89,7 +90,7 @@ def _validate_options(body: dict) -> None:
         raise ValueError("; ".join(errors))
 
 
-async def _open_printer(name: str | None = None) -> LuckPrinter:
+async def _open_printer(name: str | None = None) -> PrinterSession:
     """Open the named printer, or the active one if name is None. `name` is
     unused externally for now (there's still only ever one configured
     printer from the caller's point of view) - it's here so the multi-
@@ -101,15 +102,18 @@ async def _open_printer(name: str | None = None) -> LuckPrinter:
             "No printer configured. POST /scan to find its address, then "
             "POST /set_address."
         )
-    device = BluetoothDevice(profile["address"])
-    printer = LuckPrinter(
+    driver_cls = get_driver_class(profile.get("driver", DEFAULT_DRIVER))
+    driver = driver_cls()
+    device = BluetoothDevice(profile["address"], driver.write_characteristic, driver.notify_characteristic)
+    session = PrinterSession(
         device,
-        width=profile.get("width", 384),
+        driver,
+        width=profile.get("width", DEFAULT_WIDTH),
         density=profile.get("density"),
         font_path=profile.get("font_path"),
     )
-    await printer.initialize()
-    return printer
+    await session.initialize()
+    return session
 
 
 class Handler(BaseHTTPRequestHandler):
