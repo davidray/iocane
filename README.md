@@ -21,6 +21,13 @@ characteristics `ff01`/`ff02` under service `ff00` (check with
 "Adding support for a new printer" section if a test print doesn't work,
 since more than one incompatible protocol shares that same GATT layout.
 
+## Other servers in this repo
+
+This repo also has [`netprint-mcp`](netprint_mcp/README.md) - a separate,
+much simpler MCP server for printing documents (PDFs, images, etc) to a
+regular network printer already set up on this machine, via CUPS. No BLE,
+no daemon - see its own README for setup.
+
 ## Architecture
 
 This is split into two processes, which is unfortunately necessary on macOS:
