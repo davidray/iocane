@@ -13,6 +13,8 @@ import urllib.request
 
 from mcp.server.mcpserver import MCPServer
 
+from .config import AUTH_HEADER, get_or_create_token
+
 BASE_URL = "http://127.0.0.1:8765"
 
 APP_BUNDLE_HINT = (
@@ -32,12 +34,23 @@ def _request(method: str, path: str, payload: dict | None = None, timeout: float
     req = urllib.request.Request(
         f"{BASE_URL}{path}",
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            AUTH_HEADER: get_or_create_token(),
+        },
         method=method,
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             result = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        try:
+            result = json.loads(e.read())
+        except Exception:
+            result = None
+        if isinstance(result, dict) and "error" in result:
+            raise RuntimeError(result["error"]) from e
+        raise RuntimeError(f"Daemon returned HTTP {e.code}") from e
     except urllib.error.URLError as e:
         raise ConnectionError(APP_BUNDLE_HINT.format(url=BASE_URL)) from e
     if isinstance(result, dict) and "error" in result:
