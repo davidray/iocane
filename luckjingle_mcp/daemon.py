@@ -31,13 +31,26 @@ PORT = 8765
 
 _loop = asyncio.new_event_loop()
 
-# ThreadingHTTPServer runs every request in its own thread, but the printer
+# ThreadingHTTPServer runs every request in its own thread, but each printer
 # only supports one BLE connection at a time and the config file isn't safe
 # for concurrent read-modify-write. Serialize access to each so overlapping
-# requests (e.g. two print jobs, or a config write racing another) can't
-# interleave BLE writes (corrupting the print) or silently drop an update.
-_printer_lock = asyncio.Lock()
+# requests (e.g. two print jobs to the same printer, or a config write
+# racing another) can't interleave BLE writes (corrupting the print) or
+# silently drop an update. Printer locks are per name - printing to
+# "kitchen" shouldn't block printing to "office" - and created on demand
+# since printer names aren't known ahead of time.
+_printer_locks: dict[str, asyncio.Lock] = {}
+_printer_locks_guard = threading.Lock()
 _config_lock = threading.Lock()
+
+
+def _get_printer_lock(name: str) -> asyncio.Lock:
+    with _printer_locks_guard:
+        lock = _printer_locks.get(name)
+        if lock is None:
+            lock = asyncio.Lock()
+            _printer_locks[name] = lock
+        return lock
 
 
 def _run_loop():
@@ -88,6 +101,23 @@ def _validate_options(body: dict) -> None:
         errors.append("density must be an integer between 0 and 2")
     if errors:
         raise ValueError("; ".join(errors))
+
+
+def _resolve_printer_name(name: str | None) -> str | None:
+    """Resolve an explicit printer name, or fall back to the active
+    printer. Returns None if there's no explicit name and no active
+    printer configured either - _open_printer will raise a clear error
+    for that case, and there's nothing to lock in the meantime."""
+    if name is not None:
+        return name
+    return load_config().get("active_printer")
+
+
+async def _with_printer_lock(name: str | None, coro):
+    if name is None:
+        return await coro
+    async with _get_printer_lock(name):
+        return await coro
 
 
 async def _open_printer(name: str | None = None) -> PrinterSession:
@@ -158,6 +188,10 @@ class Handler(BaseHTTPRequestHandler):
                 "/set_address": self._set_address,
                 "/get_config": self._get_config,
                 "/set_options": self._set_options,
+                "/list_printers": self._list_printers,
+                "/add_printer": self._add_printer,
+                "/remove_printer": self._remove_printer,
+                "/select_printer": self._select_printer,
                 "/print_text": self._print_text,
                 "/print_image": self._print_image,
             }.get(self.path)
@@ -207,31 +241,85 @@ class Handler(BaseHTTPRequestHandler):
         _validate_options(body)
         with _config_lock:
             cfg = load_config()
-            name = cfg.get("active_printer") or DEFAULT_PRINTER_NAME
+            name = body.get("name")
+            if name is None:
+                # No printer named: same as before multiple printers existed
+                # - operate on (and implicitly create/activate) the active
+                # or default printer.
+                name = cfg.get("active_printer") or DEFAULT_PRINTER_NAME
+                cfg["active_printer"] = name
+            elif name not in cfg["printers"]:
+                raise ValueError(f"No such printer: {name!r}")
             profile = cfg["printers"].setdefault(name, {"driver": DEFAULT_DRIVER})
             for key in ("width", "density", "font_path"):
                 if body.get(key) is not None:
                     profile[key] = body[key]
-            cfg["active_printer"] = name
             save_config(cfg)
             result = dict(profile)
         self._send_json(result)
 
-    def _print_text(self, body):
-        async def job():
-            async with _printer_lock:
-                printer = await _open_printer()
-                try:
-                    await printer.print_text(
-                        body["text"],
-                        font_size=body.get("font_size", 24),
-                        align=body.get("align", "left"),
-                    )
-                    await printer.print_end()
-                finally:
-                    await printer.close()
+    def _list_printers(self, _body):
+        with _config_lock:
+            cfg = load_config()
+        active = cfg.get("active_printer")
+        printers = [
+            {"name": name, "active": name == active, **profile}
+            for name, profile in cfg["printers"].items()
+        ]
+        self._send_json({"printers": printers, "active_printer": active})
 
-        _run_coro(job(), timeout=60)
+    def _add_printer(self, body):
+        name = body["name"]
+        driver_name = body.get("driver", DEFAULT_DRIVER)
+        get_driver_class(driver_name)  # raises ValueError (-> 400) if unknown
+        with _config_lock:
+            cfg = load_config()
+            cfg["printers"][name] = {"driver": driver_name, "address": body["address"]}
+            if cfg.get("active_printer") is None:
+                cfg["active_printer"] = name
+            save_config(cfg)
+            active = cfg["active_printer"]
+        self._send_json({"ok": True, "active_printer": active})
+
+    def _remove_printer(self, body):
+        name = body["name"]
+        with _config_lock:
+            cfg = load_config()
+            if name not in cfg["printers"]:
+                raise ValueError(f"No such printer: {name!r}")
+            del cfg["printers"][name]
+            if cfg.get("active_printer") == name:
+                cfg["active_printer"] = next(iter(cfg["printers"]), None)
+            save_config(cfg)
+            active = cfg["active_printer"]
+        self._send_json({"ok": True, "active_printer": active})
+
+    def _select_printer(self, body):
+        name = body["name"]
+        with _config_lock:
+            cfg = load_config()
+            if name not in cfg["printers"]:
+                raise ValueError(f"No such printer: {name!r}")
+            cfg["active_printer"] = name
+            save_config(cfg)
+        self._send_json({"ok": True, "active_printer": name})
+
+    def _print_text(self, body):
+        target = _resolve_printer_name(body.get("printer"))
+
+        async def job():
+            printer = await _open_printer(target)
+            try:
+                await printer.print_text(
+                    body["text"],
+                    font_size=body.get("font_size", 24),
+                    align=body.get("align", "left"),
+                )
+                await printer.print_end()
+            finally:
+                await printer.close()
+
+        _run_coro(_with_printer_lock(target, job()), timeout=60)
         self._send_json({"ok": True})
 
     def _print_image(self, body):
@@ -240,17 +328,17 @@ class Handler(BaseHTTPRequestHandler):
             raise FileNotFoundError(f"No such file: {path}")
         img = Image.open(path)
         dither = body.get("dither", True)
+        target = _resolve_printer_name(body.get("printer"))
 
         async def job():
-            async with _printer_lock:
-                printer = await _open_printer()
-                try:
-                    await printer.print_image(img, dither=dither)
-                    await printer.print_end()
-                finally:
-                    await printer.close()
+            printer = await _open_printer(target)
+            try:
+                await printer.print_image(img, dither=dither)
+                await printer.print_end()
+            finally:
+                await printer.close()
 
-        _run_coro(job(), timeout=60)
+        _run_coro(_with_printer_lock(target, job()), timeout=60)
         self._send_json({"ok": True})
 
 
