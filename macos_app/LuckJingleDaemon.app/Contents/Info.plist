@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>luckjingle-daemon</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.techdarkside.luckjingle-daemon</string>
+    <key>CFBundleName</key>
+    <string>LuckJingle Print Daemon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>LuckJingle Print Daemon needs Bluetooth to connect to and print on your thermal label printer.</string>
+</dict>
+</plist>

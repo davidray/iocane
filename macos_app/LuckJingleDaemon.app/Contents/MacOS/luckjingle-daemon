@@ -1,0 +1,6 @@
+#!/bin/bash
+# Runs the print daemon from inside this .app bundle. Must be launched
+# independently (e.g. `open LuckJingleDaemon.app`) rather than as a
+# subprocess of another app, so macOS attributes Bluetooth (TCC) permission
+# to this bundle instead of crashing. See ../../../README.md.
+exec "/Users/dave/code/iocane/.venv/bin/python" -m luckjingle_mcp.daemon "$@"
