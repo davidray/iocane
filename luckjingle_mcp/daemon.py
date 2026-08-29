@@ -6,6 +6,7 @@
 
 import asyncio
 import json
+import sys
 import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -114,10 +115,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             handler(body)
         except Exception as e:  # noqa: BLE001 - report to caller, don't crash the daemon
-            self._send_json(
-                {"error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc()},
-                500,
-            )
+            # Log the full traceback locally for debugging, but don't hand it
+            # to the caller - it includes local file paths and internals that
+            # any process able to reach this local HTTP API shouldn't need.
+            print(f"error handling POST {self.path}:", file=sys.stderr)
+            traceback.print_exc()
+            self._send_json({"error": f"{type(e).__name__}: {e}"}, 500)
 
     def _scan(self, body):
         timeout = body.get("timeout", 6.0)
