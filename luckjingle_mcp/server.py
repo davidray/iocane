@@ -202,6 +202,12 @@ def print_image(image_path: str, dither: bool = True, printer: str | None = None
     edges crisp. printer names which configured printer to use for this one
     print job, overriding the active printer - leave unset to use the
     active printer.
+
+    For illustrated or photographic content, prefer generating a detailed
+    image (e.g. with an image-generation tool, if one is available) over
+    hand-drawing flat shapes - richer source detail dithers into far more
+    convincing output at this printer's resolution than flat vector art
+    does.
     """
     _request(
         "POST",
