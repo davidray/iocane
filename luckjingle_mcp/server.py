@@ -131,9 +131,13 @@ def add_printer(name: str, address: str, driver: str = "luckprinter") -> dict:
     If this is the first printer configured, it becomes the active one
     automatically - otherwise use select_printer to switch to it.
 
-    driver identifies the printer's protocol family - "luckprinter" (the
-    default) covers the LuckPrinter-SDK rebrand family (NHOWIN, PPS1,
-    C&Co 3128, DP-L1S, etc) and is the only driver available so far.
+    driver identifies the printer's protocol family:
+    - "luckprinter" (the default) covers the LuckPrinter-SDK rebrand family
+      (NHOWIN, PPS1, C&Co 3128, DP-L1S, etc).
+    - "d1x" targets "D1"-family printers (e.g. "Dingdang D1"). This one is
+      experimental and has never been confirmed against real hardware -
+      see NOTICE.md before relying on it, and try a real test print before
+      trusting it with anything that matters.
     """
     return _request("POST", "/add_printer", {"name": name, "address": address, "driver": driver})
 
