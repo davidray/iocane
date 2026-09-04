@@ -18,20 +18,30 @@ AUTH_HEADER = "X-Luckjingle-Token"
 
 # Config schema: "printers" is a dict of name -> {driver, address, width,
 # density, font_path}, with "active_printer" naming the one print calls use
-# when no printer is named explicitly. Schema version 1 was a single flat
-# printer block (address/width/density/font_path at the top level, no
-# "driver" field - implicitly the only driver that ever existed,
-# "luckprinter").
-SCHEMA_VERSION = 2
+# when no printer is named explicitly. "labels" is a dict of name -> {text,
+# font_size, align, border}, saved by save_label/print_label(save_as=...)
+# for later reprinting. "borders" is a dict of name -> {file}, where file
+# names a PNG under borders_dir() holding a saved decorative image used to
+# frame a label's text. Schema version 1 was a single flat printer block
+# (address/width/density/font_path at the top level, no "driver" field -
+# implicitly the only driver that ever existed, "luckprinter"). Version 2
+# introduced multi-printer support ("printers"/"active_printer"). Version 3
+# added "labels"/"borders".
+SCHEMA_VERSION = 3
 DEFAULT_DRIVER = "luckprinter"
 DEFAULT_PRINTER_NAME = "default"
 
 
 def _migrate(cfg: dict) -> tuple[dict, bool]:
-    """Upgrade a v1 (or empty/fresh) config to the current schema. Returns
-    (config, changed) - changed is False if cfg was already current, so
-    callers can skip an unnecessary rewrite."""
-    if cfg.get("_schema_version") == SCHEMA_VERSION and "printers" in cfg:
+    """Upgrade a v1/v2 (or empty/fresh) config to the current schema.
+    Returns (config, changed) - changed is False if cfg was already
+    current, so callers can skip an unnecessary rewrite."""
+    if (
+        cfg.get("_schema_version") == SCHEMA_VERSION
+        and "printers" in cfg
+        and "labels" in cfg
+        and "borders" in cfg
+    ):
         return cfg, False
 
     printers = cfg.get("printers")
@@ -54,6 +64,8 @@ def _migrate(cfg: dict) -> tuple[dict, bool]:
         "_schema_version": SCHEMA_VERSION,
         "printers": printers,
         "active_printer": active,
+        "labels": cfg.get("labels", {}),
+        "borders": cfg.get("borders", {}),
     }
     if TOKEN_KEY in cfg:
         migrated[TOKEN_KEY] = cfg[TOKEN_KEY]
@@ -96,6 +108,14 @@ def get_or_create_token() -> str:
         cfg[TOKEN_KEY] = token
         save_config(cfg)
     return token
+
+
+def borders_dir() -> Path:
+    """Directory where saved border images (PNG files named by config's
+    "borders" entries) live, next to the config file itself. A function
+    rather than a constant so it stays correct if CONFIG_PATH is changed
+    (e.g. tests monkeypatching it) after this module is imported."""
+    return CONFIG_PATH.parent / "borders"
 
 
 def get_printer(cfg: dict, name: str | None) -> dict | None:

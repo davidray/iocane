@@ -1,4 +1,4 @@
-from .base import DEFAULT_WIDTH, PrinterDriver, PrinterSession
+from .base import DEFAULT_WIDTH, PrinterDriver, PrinterSession, load_font, wrap_lines
 from .luckprinter import LuckPrinterDriver
 
 DRIVERS: dict[str, type[PrinterDriver]] = {
@@ -15,4 +15,12 @@ def get_driver_class(name: str) -> type[PrinterDriver]:
         ) from None
 
 
-__all__ = ["DEFAULT_WIDTH", "PrinterDriver", "PrinterSession", "DRIVERS", "get_driver_class"]
+__all__ = [
+    "DEFAULT_WIDTH",
+    "PrinterDriver",
+    "PrinterSession",
+    "DRIVERS",
+    "get_driver_class",
+    "load_font",
+    "wrap_lines",
+]

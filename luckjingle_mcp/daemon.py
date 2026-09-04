@@ -6,6 +6,7 @@
 
 import asyncio
 import json
+import secrets
 import sys
 import threading
 import traceback
@@ -18,12 +19,14 @@ from .config import (
     AUTH_HEADER,
     DEFAULT_DRIVER,
     DEFAULT_PRINTER_NAME,
+    borders_dir,
     get_or_create_token,
     get_printer,
     load_config,
     save_config,
 )
-from .drivers import DEFAULT_WIDTH, PrinterSession, get_driver_class
+from .drivers import DEFAULT_WIDTH, PrinterSession, get_driver_class, load_font
+from .labels import compose_label
 from .printer import BluetoothDevice, scan_devices
 
 HOST = "127.0.0.1"
@@ -146,6 +149,90 @@ async def _open_printer(name: str | None = None) -> PrinterSession:
     return session
 
 
+def _no_such_border(name: str) -> ValueError:
+    return ValueError(f"No such border: {name!r}. Use list_borders to see saved borders.")
+
+
+def _border_file(name: str | None, cfg: dict | None = None) -> Path | None:
+    """Resolve a saved border name to its stored file's path, or None if
+    `name` is None. Raises ValueError (-> 400) if `name` doesn't name a
+    saved border. Doesn't open the file - use this for a pure existence
+    check (e.g. before saving a label) so validating a name doesn't also
+    require opening image data nobody's going to use."""
+    if name is None:
+        return None
+    meta = (cfg or load_config())["borders"].get(name)
+    if meta is None:
+        raise _no_such_border(name)
+    return borders_dir() / meta["file"]
+
+
+def _load_border(name: str | None, cfg: dict | None = None) -> Image.Image | None:
+    """Load a saved border image by name, or return None if `name` is
+    None. Raises ValueError (-> 400) if `name` doesn't name a saved
+    border - including if it did a moment ago but a concurrent
+    remove_border deleted its file out from under us - so a typo'd or
+    since-removed border fails fast with a clean message instead of a raw
+    FileNotFoundError."""
+    path = _border_file(name, cfg)
+    if path is None:
+        return None
+    try:
+        return Image.open(path)
+    except FileNotFoundError:
+        raise _no_such_border(name) from None
+
+
+def _label_record(text: str, font_size: int, align: str, border: str | None, dither: bool | None) -> dict:
+    return {"text": text, "font_size": font_size, "align": align, "border": border, "dither": dither}
+
+
+def _validate_label_fields(font_size, dither) -> None:
+    """Mirrors _validate_options' reasoning: reject bad values up front
+    instead of letting them reach Pillow as an opaque exception (e.g.
+    ImageFont.truetype raising on a non-positive font_size)."""
+    errors = []
+    if not isinstance(font_size, int) or isinstance(font_size, bool) or font_size <= 0:
+        errors.append("font_size must be a positive integer")
+    if dither is not None and not isinstance(dither, bool):
+        errors.append("dither must be a boolean")
+    if errors:
+        raise ValueError("; ".join(errors))
+
+
+def _run_print_job(target: str | None, run) -> None:
+    """Open the target printer (or the active one), run the async `run`
+    callback against the session, finish the job, and close - serialized
+    per-printer via _with_printer_lock. Shared by every /print_* handler."""
+
+    async def job():
+        printer = await _open_printer(target)
+        try:
+            await run(printer)
+            await printer.print_end()
+        finally:
+            await printer.close()
+
+    _run_coro(_with_printer_lock(target, job()), timeout=60)
+
+
+def _print_composed_label(
+    target: str | None,
+    text: str,
+    font_size: int,
+    align: str,
+    border: Image.Image | None,
+    dither: bool | None = None,
+) -> None:
+    def render(printer):
+        font = load_font(printer.font_path, font_size)
+        composed = compose_label(text, printer.width, font, font_size, align, border)
+        use_dither = dither if dither is not None else border is not None
+        return printer.print_image(composed, dither=use_dither)
+
+    _run_print_job(target, render)
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send_json(self, obj, status=200):
         body = json.dumps(obj).encode()
@@ -194,6 +281,14 @@ class Handler(BaseHTTPRequestHandler):
                 "/select_printer": self._select_printer,
                 "/print_text": self._print_text,
                 "/print_image": self._print_image,
+                "/save_border": self._save_border,
+                "/list_borders": self._list_borders,
+                "/remove_border": self._remove_border,
+                "/save_label": self._save_label,
+                "/list_labels": self._list_labels,
+                "/remove_label": self._remove_label,
+                "/print_label": self._print_label,
+                "/print_saved_label": self._print_saved_label,
             }.get(self.path)
             if handler is None:
                 self._send_json({"error": "not found"}, 404)
@@ -306,20 +401,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def _print_text(self, body):
         target = _resolve_printer_name(body.get("printer"))
-
-        async def job():
-            printer = await _open_printer(target)
-            try:
-                await printer.print_text(
-                    body["text"],
-                    font_size=body.get("font_size", 24),
-                    align=body.get("align", "left"),
-                )
-                await printer.print_end()
-            finally:
-                await printer.close()
-
-        _run_coro(_with_printer_lock(target, job()), timeout=60)
+        _run_print_job(
+            target,
+            lambda printer: printer.print_text(
+                body["text"],
+                font_size=body.get("font_size", 24),
+                align=body.get("align", "left"),
+            ),
+        )
         self._send_json({"ok": True})
 
     def _print_image(self, body):
@@ -329,16 +418,117 @@ class Handler(BaseHTTPRequestHandler):
         img = Image.open(path)
         dither = body.get("dither", True)
         target = _resolve_printer_name(body.get("printer"))
+        _run_print_job(target, lambda printer: printer.print_image(img, dither=dither))
+        self._send_json({"ok": True})
 
-        async def job():
-            printer = await _open_printer(target)
-            try:
-                await printer.print_image(img, dither=dither)
-                await printer.print_end()
-            finally:
-                await printer.close()
+    def _save_border(self, body):
+        name = body["name"]
+        path = Path(body["image_path"]).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(f"No such file: {path}")
+        img = Image.open(path)
+        img.load()  # fail on a corrupt/unreadable image now, not on next print
+        with _config_lock:
+            cfg = load_config()
+            old = cfg["borders"].get(name)
+            border_dir = borders_dir()
+            border_dir.mkdir(parents=True, exist_ok=True)
+            dest = border_dir / f"{secrets.token_hex(8)}.png"
+            img.convert("RGBA").save(dest, "PNG")
+            cfg["borders"][name] = {"file": dest.name}
+            save_config(cfg)
+        if old:
+            (border_dir / old["file"]).unlink(missing_ok=True)
+        self._send_json({"ok": True})
 
-        _run_coro(_with_printer_lock(target, job()), timeout=60)
+    def _list_borders(self, _body):
+        cfg = load_config()
+        self._send_json({"borders": sorted(cfg["borders"])})
+
+    def _remove_border(self, body):
+        name = body["name"]
+        with _config_lock:
+            cfg = load_config()
+            meta = cfg["borders"].get(name)
+            if meta is None:
+                raise _no_such_border(name)
+            del cfg["borders"][name]
+            save_config(cfg)
+        (borders_dir() / meta["file"]).unlink(missing_ok=True)
+        self._send_json({"ok": True})
+
+    def _save_label(self, body):
+        name = body["name"]
+        text = body["text"]
+        if not text:
+            raise ValueError("text is required")
+        font_size = body.get("font_size", 24)
+        align = body.get("align", "center")
+        border = body.get("border")
+        dither = body.get("dither")
+        _validate_label_fields(font_size, dither)
+        _border_file(border)  # validates the name up front, raises if unknown
+        with _config_lock:
+            cfg = load_config()
+            cfg["labels"][name] = _label_record(text, font_size, align, border, dither)
+            save_config(cfg)
+        self._send_json({"ok": True})
+
+    def _list_labels(self, _body):
+        cfg = load_config()
+        labels = [{"name": name, **label} for name, label in cfg["labels"].items()]
+        self._send_json({"labels": labels})
+
+    def _remove_label(self, body):
+        name = body["name"]
+        with _config_lock:
+            cfg = load_config()
+            if name not in cfg["labels"]:
+                raise ValueError(f"No such label: {name!r}")
+            del cfg["labels"][name]
+            save_config(cfg)
+        self._send_json({"ok": True})
+
+    def _print_label(self, body):
+        text = body.get("text")
+        if not text:
+            raise ValueError("text is required")
+        font_size = body.get("font_size", 24)
+        align = body.get("align", "center")
+        border_name = body.get("border")
+        dither = body.get("dither")
+        save_as = body.get("save_as")
+        target = _resolve_printer_name(body.get("printer"))
+
+        _validate_label_fields(font_size, dither)
+        border_img = _load_border(border_name)  # raises ValueError if unknown
+
+        if save_as:
+            with _config_lock:
+                cfg = load_config()
+                cfg["labels"][save_as] = _label_record(text, font_size, align, border_name, dither)
+                save_config(cfg)
+
+        _print_composed_label(target, text, font_size, align, border_img, dither)
+        self._send_json({"ok": True, "saved_as": save_as})
+
+    def _print_saved_label(self, body):
+        name = body["name"]
+        cfg = load_config()
+        label = cfg["labels"].get(name)
+        if label is None:
+            raise ValueError(f"No such label: {name!r}. Use list_labels to see saved labels.")
+        target = _resolve_printer_name(body.get("printer"))
+        border_img = _load_border(label.get("border"), cfg)
+
+        _print_composed_label(
+            target,
+            label["text"],
+            label.get("font_size", 24),
+            label.get("align", "center"),
+            border_img,
+            label.get("dither"),
+        )
         self._send_json({"ok": True})
 
 

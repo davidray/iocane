@@ -16,6 +16,48 @@ from ..raster import image_to_bitmap
 DEFAULT_WIDTH = 384  # dots; standard for 48mm/58mm 203dpi thermal heads
 
 
+def load_font(font_path: str | None, font_size: int) -> ImageFont.FreeTypeFont:
+    """Load a font for rendering printed text, falling back through a list
+    of candidates (a configured font_path first, then common system fonts)
+    down to Pillow's built-in bitmap font if none of those are present."""
+    candidates = [
+        font_path,
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ]
+    for path in candidates:
+        if not path:
+            continue
+        try:
+            return ImageFont.truetype(path, font_size)
+        except OSError:
+            continue
+    try:
+        return ImageFont.load_default(size=font_size)
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def wrap_lines(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
+    """Word-wrap `text` (which may itself contain newlines) to `max_width`,
+    measuring each candidate line with `font`'s actual rendered width."""
+    lines = []
+    for raw_line in text.split("\n"):
+        words = raw_line.split(" ")
+        current = ""
+        for word in words:
+            trial = f"{current} {word}".strip()
+            if font.getlength(trial) <= max_width or not current:
+                current = trial
+            else:
+                lines.append(current)
+                current = word
+        lines.append(current)
+    return lines
+
+
 class PrinterDriver(ABC):
     """Everything specific to one printer protocol/hardware family. All of
     these command-building methods return raw bytes (or a list of them);
@@ -102,42 +144,14 @@ class PrinterSession:
         await self._write_command(self.driver.build_end(), wait=self.driver.end_wait)
 
     def _default_font(self, font_size: int) -> ImageFont.FreeTypeFont:
-        candidates = [
-            self.font_path,
-            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        ]
-        for path in candidates:
-            if not path:
-                continue
-            try:
-                return ImageFont.truetype(path, font_size)
-            except OSError:
-                continue
-        try:
-            return ImageFont.load_default(size=font_size)
-        except TypeError:
-            return ImageFont.load_default()
+        return load_font(self.font_path, font_size)
 
     async def print_text(self, text: str, font_size: int = 24, align: str = "left"):
         font = self._default_font(font_size)
         margin = 8
         max_width = self.width - 2 * margin
 
-        lines = []
-        for raw_line in text.split("\n"):
-            words = raw_line.split(" ")
-            current = ""
-            for word in words:
-                trial = f"{current} {word}".strip()
-                if font.getlength(trial) <= max_width or not current:
-                    current = trial
-                else:
-                    lines.append(current)
-                    current = word
-            lines.append(current)
+        lines = wrap_lines(text, font, max_width)
 
         line_height = font_size + 6
         img_height = line_height * len(lines) + 2 * margin

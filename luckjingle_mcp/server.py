@@ -219,6 +219,130 @@ def print_image(image_path: str, dither: bool = True, printer: str | None = None
 
 
 @mcp.tool()
+def save_border(name: str, image_path: str) -> str:
+    """Save an image file as a reusable named "border" - a decorative
+    design that print_label/save_label can frame text with (e.g. a strip
+    of clipart). The image is copied into managed storage, so image_path
+    itself doesn't need to stick around afterwards.
+
+    Saving again under a name that already exists replaces it.
+    """
+    _request("POST", "/save_border", {"name": name, "image_path": image_path})
+    return f"Saved border: {name}"
+
+
+@mcp.tool()
+def list_borders() -> list[str]:
+    """List the names of every saved border, for use with print_label's or
+    save_label's `border` argument."""
+    return _request("POST", "/list_borders", {})["borders"]
+
+
+@mcp.tool()
+def remove_border(name: str) -> str:
+    """Delete a saved border. Any saved label that referenced it will fail
+    to print until given a different border or none."""
+    _request("POST", "/remove_border", {"name": name})
+    return f"Removed border: {name}"
+
+
+@mcp.tool()
+def print_label(
+    text: str,
+    font_size: int = 24,
+    align: str = "center",
+    border: str | None = None,
+    dither: bool | None = None,
+    save_as: str | None = None,
+    printer: str | None = None,
+) -> str:
+    """Compose and print a text label, optionally framed by a saved border
+    (see save_border/list_borders) - e.g. "Flux Capacitor" framed by a
+    "dancing kittens" border.
+
+    dither controls whether the composed image is dithered before
+    printing - leave unset to dither automatically only when a border is
+    present (borders usually have more tonal detail than plain text does);
+    set explicitly to override that for a particular border's art.
+
+    Pass save_as to also save this exact label (text, font_size, align,
+    border, dither) under that name for print_saved_label to print again
+    later without re-specifying everything. printer targets a specific
+    printer for this one job, overriding the active printer.
+    """
+    result = _request(
+        "POST",
+        "/print_label",
+        {
+            "text": text,
+            "font_size": font_size,
+            "align": align,
+            "border": border,
+            "dither": dither,
+            "save_as": save_as,
+            "printer": printer,
+        },
+        timeout=60,
+    )
+    if result.get("saved_as"):
+        return f"Print job sent. Saved as label {result['saved_as']!r}."
+    return "Print job sent."
+
+
+@mcp.tool()
+def save_label(
+    name: str,
+    text: str,
+    font_size: int = 24,
+    align: str = "center",
+    border: str | None = None,
+    dither: bool | None = None,
+) -> str:
+    """Save a label (text, font size, alignment, optional border) under a
+    name, without printing it - use print_saved_label to print it later.
+    Saving again under a name that already exists replaces it. To save and
+    print in one step, use print_label(..., save_as=name) instead. See
+    print_label for what dither controls.
+    """
+    _request(
+        "POST",
+        "/save_label",
+        {
+            "name": name,
+            "text": text,
+            "font_size": font_size,
+            "align": align,
+            "border": border,
+            "dither": dither,
+        },
+    )
+    return f"Saved label: {name}"
+
+
+@mcp.tool()
+def list_labels() -> list[dict]:
+    """List every saved label (name, text, font_size, align, border)."""
+    return _request("POST", "/list_labels", {})["labels"]
+
+
+@mcp.tool()
+def remove_label(name: str) -> str:
+    """Delete a saved label."""
+    _request("POST", "/remove_label", {"name": name})
+    return f"Removed label: {name}"
+
+
+@mcp.tool()
+def print_saved_label(name: str, printer: str | None = None) -> str:
+    """Reprint a label previously saved with save_label or
+    print_label(..., save_as=...). printer targets a specific printer for
+    this one job, overriding the active printer.
+    """
+    _request("POST", "/print_saved_label", {"name": name, "printer": printer}, timeout=60)
+    return "Print job sent."
+
+
+@mcp.tool()
 def get_daemon_info() -> str:
     """Explain how to start the required LuckJingle print daemon, and
     whether it is currently reachable."""

@@ -7,7 +7,7 @@ def _use_temp_config(tmp_path, monkeypatch):
     monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.json")
 
 
-def test_migrate_v1_flat_config_to_v2(tmp_path, monkeypatch):
+def test_migrate_v1_flat_config_to_latest(tmp_path, monkeypatch):
     _use_temp_config(tmp_path, monkeypatch)
     config_module.CONFIG_PATH.write_text(
         json.dumps(
@@ -22,7 +22,7 @@ def test_migrate_v1_flat_config_to_v2(tmp_path, monkeypatch):
 
     cfg = config_module.load_config()
 
-    assert cfg["_schema_version"] == 2
+    assert cfg["_schema_version"] == 3
     assert cfg["active_printer"] == "default"
     assert cfg["printers"] == {
         "default": {
@@ -33,12 +33,35 @@ def test_migrate_v1_flat_config_to_v2(tmp_path, monkeypatch):
             "font_path": None,
         }
     }
+    assert cfg["labels"] == {}
+    assert cfg["borders"] == {}
     assert cfg["_auth_token"] == "sometoken"
 
     # Migration is persisted, not just returned in memory.
     on_disk = json.loads(config_module.CONFIG_PATH.read_text())
-    assert on_disk["_schema_version"] == 2
+    assert on_disk["_schema_version"] == 3
     assert on_disk["printers"]["default"]["address"] == "AA:BB:CC:DD:EE:FF"
+
+
+def test_migrate_v2_config_gains_empty_labels_and_borders(tmp_path, monkeypatch):
+    _use_temp_config(tmp_path, monkeypatch)
+    config_module.CONFIG_PATH.write_text(
+        json.dumps(
+            {
+                "_schema_version": 2,
+                "printers": {"kitchen": {"driver": "luckprinter", "address": "AA:BB"}},
+                "active_printer": "kitchen",
+            }
+        )
+    )
+
+    cfg = config_module.load_config()
+
+    assert cfg["_schema_version"] == 3
+    assert cfg["printers"] == {"kitchen": {"driver": "luckprinter", "address": "AA:BB"}}
+    assert cfg["active_printer"] == "kitchen"
+    assert cfg["labels"] == {}
+    assert cfg["borders"] == {}
 
 
 def test_migrate_empty_config_has_no_printers(tmp_path, monkeypatch):
@@ -46,7 +69,13 @@ def test_migrate_empty_config_has_no_printers(tmp_path, monkeypatch):
 
     cfg = config_module.load_config()
 
-    assert cfg == {"_schema_version": 2, "printers": {}, "active_printer": None}
+    assert cfg == {
+        "_schema_version": 3,
+        "printers": {},
+        "active_printer": None,
+        "labels": {},
+        "borders": {},
+    }
 
 
 def test_migrate_v1_config_with_no_address_has_no_printers(tmp_path, monkeypatch):
