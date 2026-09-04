@@ -180,12 +180,45 @@ separately each time you want to print (see above).
 - `print_image(image_path, dither=True, printer=None)` - print an image
   file, resized to the paper width and converted to black & white;
   `printer` targets a specific printer for this job only
+- `print_label(text, font_size=24, align="center", border=None, dither=None, save_as=None, printer=None)`
+  - compose and print a text label, optionally framed by a saved border
+  (e.g. "Flux Capacitor" with the "dancing kittens" border); `dither`
+  overrides the automatic choice (dithered only when a border is present);
+  pass `save_as` to also save it for reprinting later
+- `save_label(name, text, font_size=24, align="center", border=None, dither=None)`
+  - save a label without printing it, for `print_saved_label` later
+- `list_labels()` - list every saved label
+- `remove_label(name)` - delete a saved label
+- `print_saved_label(name, printer=None)` - reprint a label saved with
+  `save_label` or `print_label(..., save_as=...)`
+- `save_border(name, image_path)` - save an image as a reusable named
+  border that `print_label`/`save_label` can frame text with
+- `list_borders()` - list every saved border's name
+- `remove_border(name)` - delete a saved border
 - `get_daemon_info()` - checks whether the daemon is reachable and explains
   how to start it if not
 
 To print a custom design (a label with a logo, a QR code, a styled layout,
 etc), have Claude generate a PNG with whatever tool/script fits, save it to
 disk, then call `print_image` with that path.
+
+## Saved labels and borders
+
+- **Labels** are a saved (text, font size, alignment, border) combo you can
+  reprint by name later without repeating everything - either save one up
+  front with `save_label`, or print now and save in the same call with
+  `print_label(..., save_as="...")`.
+- **Borders** are a saved image (e.g. a strip of clipart) that frames a
+  label's text. Save one with `save_border("dancing kittens", "/path/to/
+  kittens.png")`, then reference it by name: `print_label("Flux Capacitor",
+  border="dancing kittens")`. The text always sits on a plain white panel
+  in the middle so it stays legible regardless of the border's own colors -
+  the border image itself is tiled to frame that panel, so a short
+  repeating strip works better than one large single graphic.
+
+Saved labels and border images live alongside the printer config, in
+`~/.config/luckjingle-mcp/` - `config.json` for the label/border metadata,
+`borders/` for the saved border image files themselves.
 
 ## Troubleshooting
 
